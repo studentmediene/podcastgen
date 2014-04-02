@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <math.h>
 
+typedef enum { false, true } bool;
+
 int signum(float n) {
 	return (n > 0) - (n < 0);
 }
@@ -100,7 +102,7 @@ int main(int argc, char *argv[]) {
 	float variance_difference_sum; // sum of (x_i - mu)^2
 	float lowthres; // used to compute the MLER value
 
-	const float LOW_ENERGY_COEFFICIENT = 0.08; // see http://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1292679
+	const float LOW_ENERGY_COEFFICIENT = 0.10; // see http://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1292679
 
 	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
 		// We calculate four features for the 1 second interval:
@@ -119,24 +121,52 @@ int main(int argc, char *argv[]) {
 		mean_rms[long_frame] = rms_sum/RMS_FRAMES_IN_LONG_FRAME;
 
 		// Variances and MLER
-		lowthres = LOW_ENERGY_COEFFICIENT*rms_sum;
+		lowthres = LOW_ENERGY_COEFFICIENT*mean_rms[long_frame];
 		mler[long_frame] = 0;
 		for (current_rms_frame = start_rms_frame; current_rms_frame < start_rms_frame + RMS_FRAMES_IN_LONG_FRAME; current_rms_frame++) {
-			variance_difference_sum += pow(rms[current_rms_frame] - mean_rms[long_frame], 2);
+			variance_difference_sum += pow(rms[current_rms_frame] - rms_sum, 2);
 			mler[long_frame] += signum(lowthres-rms[current_rms_frame]) + 1;
-			variance_difference_sum += pow(rms[current_rms_frame] - mean_rms[long_frame], 2);
+			variance_difference_sum += pow(rms[current_rms_frame] - rms_sum, 2);
 		}
 		variance_rms[long_frame] = variance_difference_sum/RMS_FRAMES_IN_LONG_FRAME;
 		norm_variance_rms[long_frame] = variance_rms[long_frame]/mean_rms[long_frame];
 		mler[long_frame] = mler[long_frame]/(2*RMS_FRAMES_IN_LONG_FRAME);
 
-		printf("Seconds: %d\n", long_frame);
+		/*printf("Seconds: %d\n", long_frame);
 		printf("Mean: %f\n", mean_rms[long_frame]);
 		printf("Variance: %f\n", variance_rms[long_frame]);
 		printf("Normalized variance: %f\n", norm_variance_rms[long_frame]);
-		printf("MLER: %f\n\n", mler[long_frame]);
+		printf("MLER: %f\n\n", mler[long_frame]);*/
 
 		start_rms_frame += RMS_FRAMES_IN_LONG_FRAME;
+	}
+
+	// CLASSIFY
+	bool *music = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
+	bool *music_second_pass = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
+
+	// First pass: decide whether a given second segment is music or speech
+	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
+		if (mler[long_frame] < 0.01) {
+			music[long_frame] = true;
+		} else {
+			music[long_frame] = false;
+		}
+	}
+
+	// Second pass: check if there are other speech segments within the next 10 frames
+	music_second_pass[0] = true;
+	music_second_pass[1] = true;
+	for (int long_frame = 2; long_frame < LONG_FRAME_COUNT-2; long_frame++) {
+		music_second_pass[long_frame] = rint((music[long_frame-2]+music[long_frame-1]+music[long_frame]+music[long_frame+1]+music[long_frame+2])/5.0);
+	}
+
+	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT-10; long_frame++) {
+		if (music_second_pass[long_frame]) {
+			puts("MUSIC");
+		} else {
+			puts("-----");
+		}
 	}
 
 	// CLEANUP
