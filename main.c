@@ -20,11 +20,20 @@ int signum(float n) {
 }
 
 int main(int argc, char *argv[]) {
+	// GET FILE TO OPEN FROM ARGUMENT
+	const char* filename;
+	if (argc > 1) {
+		filename = argv[1];
+	} else {
+		printf("Please supply a source file.\n");
+		return 1;
+	}
+
 	// SOURCE FILE
 	SNDFILE *source_file;
 	SF_INFO source_info;
 
-	if (!(source_file = sf_open("testsound.wav", SFM_READ, &source_info))) {
+	if (!(source_file = sf_open(filename, SFM_READ, &source_info))) {
 		printf("An error occured while opening the source file.\n");
 		printf("%s\n", sf_strerror(NULL));
 		return 1;
@@ -57,9 +66,7 @@ int main(int argc, char *argv[]) {
 	
 	float *rms = malloc(2*RMS_FRAME_COUNT*sizeof(float));
 	float *read_cache = malloc(2*FRAMES_IN_RMS_FRAME*sizeof(float));
-	float *write_cache = malloc(2*sizeof(float));
 	sf_count_t frames_read = 0;
-	sf_count_t frames_written = 0;
 
 	int frame; // dummy variable for inner loop
 	double local_rms; // temporary variable for inner loop
@@ -74,10 +81,6 @@ int main(int argc, char *argv[]) {
 		local_rms = sqrt(local_rms/RMS_FRAME_LENGTH);
 
 		rms[rms_frame] = local_rms;
-
-		write_cache[0] = local_rms;
-		write_cache[1] = local_rms;
-		frames_written = sf_writef_float(dest_file, write_cache, 1);
 	}
 
 	puts("Calculated RMS...");
@@ -102,7 +105,7 @@ int main(int argc, char *argv[]) {
 	float variance_difference_sum; // sum of (x_i - mu)^2
 	float lowthres; // used to compute the MLER value
 
-	const float LOW_ENERGY_COEFFICIENT = 0.10; // see http://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1292679
+	const float LOW_ENERGY_COEFFICIENT = 0.15; // see http://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1292679
 
 	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
 		// We calculate four features for the 1 second interval:
@@ -161,11 +164,91 @@ int main(int argc, char *argv[]) {
 		music_second_pass[long_frame] = rint((music[long_frame-2]+music[long_frame-1]+music[long_frame]+music[long_frame+1]+music[long_frame+2])/5.0);
 	}
 
-	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT-10; long_frame++) {
+	/*for (int long_frame = 0; long_frame < LONG_FRAME_COUNT-10; long_frame++) {
 		if (music_second_pass[long_frame]) {
 			puts("MUSIC");
 		} else {
 			puts("-----");
+		}
+	}*/
+	free(music);
+
+	// Third pass: merge smaller segments with larger segments
+
+	typedef struct segment {
+		int startframe;
+		int endframe;
+		bool is_music;
+	} segment;
+
+	segment *segments = malloc(LONG_FRAME_COUNT*sizeof(segment));
+	int current_segment = 0;
+	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
+		if (long_frame == 0) {
+			segments[current_segment].startframe = 0;
+			segments[current_segment].endframe = 0;
+			segments[current_segment].is_music = true;
+		} else if (music_second_pass[long_frame] == segments[current_segment].is_music) {
+			segments[current_segment].endframe++;
+		} else {
+			current_segment++;
+			segments[current_segment].startframe = long_frame;
+			segments[current_segment].endframe = long_frame;
+			segments[current_segment].is_music = music_second_pass[long_frame];
+		}
+	}
+
+	segment *merged_segments = malloc(LONG_FRAME_COUNT*sizeof(segment));
+	int current_merged_segment = 0;
+	for (int seg = 0; seg < current_segment; seg++) {
+		if (seg == 0) {
+			merged_segments[0].startframe = segments[0].startframe;
+			merged_segments[0].endframe = segments[0].endframe;
+			merged_segments[0].is_music = false;
+		} else if (segments[seg].endframe - segments[seg].startframe < 10) {
+			merged_segments[current_merged_segment].endframe = segments[seg].endframe;
+		} else if (segments[seg].is_music == merged_segments[current_merged_segment].is_music) {
+			merged_segments[current_merged_segment].endframe = segments[seg].endframe;
+		} else {
+			current_merged_segment++;
+			merged_segments[current_merged_segment].startframe = segments[seg].startframe;
+			merged_segments[current_merged_segment].endframe = segments[seg].endframe;
+			merged_segments[current_merged_segment].is_music = segments[seg].is_music;
+		}
+	}
+	free(segments);
+
+	for (int s = 0; s < current_merged_segment; s++) {
+		printf("%d to %d: music? %d\n", merged_segments[s].startframe, merged_segments[s].endframe, merged_segments[s].is_music);
+	}
+
+	// Finally, we write only the speech sections to the destination file
+	float *cache = malloc(1);
+	int frames_to_read;
+	sf_count_t current_read_location;
+	sf_count_t current_write_location;
+	puts("Writing...");
+	for (int s = 0; s < current_merged_segment; s++) {
+		if (merged_segments[s].is_music) {
+			continue;
+		} else {
+			puts("Seeking...");
+			if (s == 0) {
+				current_read_location = sf_seek(source_file, (merged_segments[s].startframe)*FRAMES_IN_LONG_FRAME, SEEK_SET);
+				frames_to_read = (merged_segments[s].endframe-merged_segments[s].startframe+5)*FRAMES_IN_LONG_FRAME;
+			} else {
+				current_read_location = sf_seek(source_file, (merged_segments[s].startframe-5)*FRAMES_IN_LONG_FRAME, SEEK_SET);
+				frames_to_read = (merged_segments[s].endframe-merged_segments[s].startframe+10)*FRAMES_IN_LONG_FRAME;
+			}
+			puts("Allocating...");
+			cache = realloc(cache, frames_to_read*2*sizeof(float));
+			puts("Reading...");
+			current_read_location = sf_readf_float(source_file, cache, frames_to_read);
+			puts("Writing...");
+			current_write_location = sf_writef_float(dest_file, cache, frames_to_read);
+			puts("Syncing...");
+			sf_write_sync(dest_file);
+			puts("Written!");
 		}
 	}
 
