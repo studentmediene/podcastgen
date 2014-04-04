@@ -130,9 +130,11 @@ int main(int argc, char *argv[]) {
 	// CLASSIFY
 	bool *is_music = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
 
-	// Decide whether a given second segment is music or speech,
+	// Decide whether a given second long segment is music or speech,
 	// based on the MLER value and the Upper Music Threshold
-	classify_segments(is_music, mler);
+	//classify_segments(is_music, mler);
+	bool *transition = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
+	classify_segments2(transition, mean_rms, variance_rms, norm_variance_rms, mler);
 
 	// The music-ness of the frame equals the average music-ness of itself and
 	// the two previous and next frames

@@ -79,3 +79,20 @@ char *prettify_seconds(int start, int delta) {
 
 	return interval_string;
 }
+
+double manymax(double args, ...) {
+	double max;
+	double a;
+	va_list ap;
+
+	va_start(ap, args);
+	max = va_arg(ap, double);
+	for (int i = 2; i <= args; i++) {
+		if ((a = va_arg(ap, int)) > max) {
+			max = a;
+		}
+	}
+
+	va_end(ap);
+	return max;
+}

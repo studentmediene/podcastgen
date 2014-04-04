@@ -36,6 +36,7 @@ extern float UPPER_MUSIC_THRESHOLD;
 float *calculate_rms(float *rms);
 float *calculate_features(float *rms, float *mean_rms, float *variance_rms, float *norm_variance_rms, float *mler);
 void classify_segments(bool *is_music, float *mler);
+void classify_segments2(bool* transition, float *mean_rms, float *variance_rms, float *norm_variance_rms, float *mler);
 void average_musicness(bool *is_music);
 int merge_segments(bool *is_music, segment *merged_segments);
 

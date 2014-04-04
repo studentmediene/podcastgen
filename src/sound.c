@@ -115,6 +115,60 @@ void classify_segments(bool *is_music, float *mler) {
 	}
 }
 
+void classify_segments2(bool *transition, float *mean_rms, float *variance_rms, float *norm_variance_rms, float *mler) {
+	float *dissim = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+	float *dissim_norm = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+	float *a = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+	float *b = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+
+	float pmp_left = 0;
+	float pmp_right_top = 0;
+	float pmp_right_bottom = 0;
+	float pmp = 0; // p(p_i-1, p_i+1)
+
+	// We calculate a and b for every frame
+	for (int lf = 0; lf < LONG_FRAME_COUNT; lf++) {
+		a[lf] = (pow(mean_rms[lf],2)/pow(variance_rms[lf], 2)) - 1;
+		b[lf] = pow(variance_rms[lf], 2)/mean_rms[lf];
+	}
+
+	// Calculate the dissimilarity measure for every frame
+	dissim[0] = 0;
+	for (int lf = 1; lf < LONG_FRAME_COUNT; lf++) {
+		pmp_left = tgammaf((a[lf-1]+a[lf+1])/2.0 + 1)/sqrt(tgammaf(a[lf-1]+1)*tgammaf(a[lf+1]+1));
+		pmp_right_top = pow(2, (a[lf-1] + a[lf+1])/(2.0) + 1) * pow(b[lf-1], (a[lf+1]+1)/2.0) * pow(b[lf+1], (a[lf-1]+1)/2.0);
+		pmp_right_bottom = pow(b[lf-1] + b[lf+1], (a[lf-1]+a[lf+1])/2.0 + 1);
+		pmp = pmp_left * (pmp_right_top/pmp_right_bottom);
+
+		dissim[lf] = 1 - pmp;
+	}
+
+	free(a);
+	free(b);
+
+	// Calculate the normalized dissimilarity measure for every frame
+	int lfc = LONG_FRAME_COUNT;
+	dissim_norm[0] = (dissim[0]*(dissim[0]-(dissim[0]+dissim[0+1]+dissim[0+2])/3.0))/manymax(dissim[0], dissim[0+1], dissim[0+2]);
+	dissim_norm[1] = (dissim[1]*(dissim[1]-(dissim[1-1]+dissim[1]+dissim[1+1]+dissim[1+2])/4.0))/manymax(dissim[1-1], dissim[1], dissim[1+1], dissim[1+2]);
+	for (int lf = 2; lf < LONG_FRAME_COUNT-2; lf++) {
+		dissim_norm[lf] = (dissim[lf]*(dissim[lf]-(dissim[lf-2]+dissim[lf-1]+dissim[lf]+dissim[lf+1]+dissim[lf+2])/5.0))/manymax(dissim[lf-2], dissim[lf-1], dissim[lf], dissim[lf+1], dissim[lf+2]);
+	}
+	dissim_norm[LONG_FRAME_COUNT-1] = (dissim[lfc]*(dissim[lfc]-(dissim[lfc-2]+dissim[lfc-1]+dissim[lfc]+dissim[lfc+1])/4.0))/manymax(dissim[lfc-2], dissim[lfc-1], dissim[lfc], dissim[lfc+1]);
+	dissim_norm[LONG_FRAME_COUNT] = (dissim[lfc]*(dissim[lfc]-(dissim[lfc-2]+dissim[lfc-1]+dissim[lfc])/3.0))/manymax(dissim[lfc-2], dissim[lfc-1], dissim[lfc]);
+
+	free(dissim);
+
+	// Find transitions based on set threshold
+	for (int lf = 0; lf < LONG_FRAME_COUNT; lf++) {
+		if (dissim[lf] > 0.95) {
+			transition[lf] = true;
+			logger(NOTICE, "Transition at %s.", prettify_seconds(lf, 0));
+		} else {
+			transition[lf] = false;
+		}
+	}
+}
+
 void average_musicness(bool *is_music) {
 	bool *music_second_pass = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
 	music_second_pass[0] = true;

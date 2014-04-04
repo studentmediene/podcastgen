@@ -24,3 +24,4 @@ void _logger(severity_t severity, const char *message, ...)
 int signum(float n);
 void split_path(char *full_path, char **folders, char **file);
 char *prettify_seconds(int start, int delta);
+double manymax(double args, ...);
