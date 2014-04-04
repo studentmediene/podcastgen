@@ -154,6 +154,7 @@ int main(int argc, char *argv[]) {
 	free(norm_variance_rms);
 	free(mler);
 
+	free(merged_segments);
 	free(is_music);
 	free(rms);
 
