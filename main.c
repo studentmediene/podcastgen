@@ -31,9 +31,13 @@ int FRAMES_IN_LONG_FRAME;
 int LONG_FRAME_COUNT;
 int RMS_FRAMES_IN_LONG_FRAME;
 
+float LOW_ENERGY_COEFFICIENT = 0.15; // see http://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1292679
+float UPPER_MUSIC_THRESHOLD = 0.01; // MLER below this value => 1 second frame classified as music
+
 char filename[100];
 bool verbose = false;
 bool very_verbose = false;
+bool ignore_start_music = false;
 
 int signum(float n) {
 	return (n > 0) - (n < 0);
@@ -64,16 +68,21 @@ char *interpret_args(int argc, char *argv[]) {
 		"\n"
 		"	-h, --help\t\tDisplay this help text\n"
 		"	-v\t\t\tVerbose output\n"
+		"	-C\t\t\tSet the Low Energy Coefficient\n"
+		"	-T\t\t\tSet the Upper Music Threshold\n"
 		"	--very-verbose\t\tVERY verbose output\n"
-		"	--ignore-start-music\tDo not remove music at start of file\n\n";
+		"	--ignore-start-music,\n"
+		"	--has-intro\t\tDo not remove music at start of file\n\n";
 
 	static struct option long_options[] = {
 		{"help", no_argument, NULL, 'h'},
-		{"very-verbose", no_argument, (int*) &very_verbose, true}
+		{"very-verbose", no_argument, (int*) &very_verbose, true},
+		{"ignore-start-music", no_argument, (int*) &ignore_start_music, true},
+		{"has-intro", no_argument, (int*) &ignore_start_music, true}
 	};
 
 	int opt;
-	while ((opt = getopt_long(argc, argv, "vh", long_options, NULL)) != -1) {
+	while ((opt = getopt_long(argc, argv, "vhC:T:", long_options, NULL)) != -1) {
 		switch (opt) {
 			case 'v':
 				verbose = true;
@@ -81,6 +90,12 @@ char *interpret_args(int argc, char *argv[]) {
 			case 'h':
 				printf(HELP_TEXT);
 				exit(0);
+			case 'C':
+				LOW_ENERGY_COEFFICIENT = atof(optarg);
+				break;
+			case 'T':
+				UPPER_MUSIC_THRESHOLD = atof(optarg);
+				break;
 			case '?':
 				fprintf(stderr, "Unknown argument \'-%c\'.\n", optopt);
 				exit(1);
@@ -108,18 +123,17 @@ float *calculate_rms(float *rms) {
 
 	for (int rms_frame = 0; rms_frame < RMS_FRAME_COUNT; rms_frame++) {
 		frames_read = sf_readf_float(source_file, read_cache, FRAMES_IN_RMS_FRAME);
-
 		local_rms = 0;
+
 		for (frame = 0; frame < frames_read; frame++) {
 			local_rms += pow(read_cache[frame], 2);
 		}
-		local_rms = sqrt(local_rms/RMS_FRAME_LENGTH);
 
+		local_rms = sqrt(local_rms/RMS_FRAME_LENGTH);
 		rms[rms_frame] = local_rms;
 	}
 
 	free(read_cache);
-
 	return rms;
 }
 
@@ -131,8 +145,6 @@ float *calculate_features(float *rms, float *mean_rms, float *variance_rms, floa
 	float rms_sum;
 	float variance_difference_sum; // sum of (x_i - mu)^2
 	float lowthres; // used to compute the MLER value
-
-	const float LOW_ENERGY_COEFFICIENT = 0.15; // see http://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1292679
 
 	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
 		// We calculate four features for the 1 second interval:
@@ -232,7 +244,7 @@ int main(int argc, char *argv[]) {
 
 	// Decide whether a given second segment is music or speech
 	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
-		if (mler[long_frame] < 0.01) {
+		if (mler[long_frame] < UPPER_MUSIC_THRESHOLD) {
 			music[long_frame] = true;
 		} else {
 			music[long_frame] = false;
@@ -279,7 +291,9 @@ int main(int argc, char *argv[]) {
 		if (seg == 0) {
 			merged_segments[0].startframe = segments[0].startframe;
 			merged_segments[0].endframe = segments[0].endframe;
-			merged_segments[0].is_music = false;
+			if (ignore_start_music) {
+				merged_segments[0].is_music = false;
+			}
 		} else if (segments[seg].endframe - segments[seg].startframe < 10) {
 			merged_segments[current_merged_segment].endframe = segments[seg].endframe;
 		} else if (segments[seg].is_music == merged_segments[current_merged_segment].is_music) {
