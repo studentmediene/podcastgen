@@ -10,26 +10,35 @@
 
 #include <sndfile.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <math.h>
 
 typedef enum { false, true } bool;
 
 SNDFILE *source_file;
-SF_INFO source_info;
-
 SNDFILE *dest_file;
+SF_INFO source_info;
 SF_INFO dest_info;
 
-int RMS_FRAME_LENGTH = 20; // Length of the RMS calculation frames in milliseconds
+const int RMS_FRAME_LENGTH = 20; // Length of the RMS calculation frames in milliseconds
 int FRAMES_IN_RMS_FRAME;
 int RMS_FRAME_COUNT;
+const int LONG_FRAME_LENGTH = 1000; // Length of the long (averaging) frames in milliseconds
+int FRAMES_IN_LONG_FRAME;
+int LONG_FRAME_COUNT;
+int RMS_FRAMES_IN_LONG_FRAME;
+
+char filename[100];
+bool verbose = false;
+bool very_verbose = false;
 
 int signum(float n) {
 	return (n > 0) - (n < 0);
 }
 
-void open_source_file(const char *filename) {
+void open_source_file() {
 	if (!(source_file = sf_open(filename, SFM_READ, &source_info))) {
 		printf("An error occured while opening the source file.\n");
 		printf("%s\n", sf_strerror(NULL));
@@ -38,7 +47,10 @@ void open_source_file(const char *filename) {
 }
 
 void open_dest_file() {
-	if (!(dest_file = sf_open("testsound_out.wav", SFM_WRITE, &dest_info))) {
+	char output_filename[100];
+	strcpy(output_filename, "podcast_");
+	strcat(output_filename, filename);
+	if (!(dest_file = sf_open(output_filename, SFM_WRITE, &dest_info))) {
 		printf("An error occured while opening the destination file.\n");
 		printf("%s\n", sf_strerror(NULL));
 		exit(1);
@@ -46,8 +58,19 @@ void open_dest_file() {
 }
 
 char *interpret_args(int argc, char *argv[]) {
-	if (argc > 1) {
-		return argv[1];
+	int opt;
+	while ((opt = getopt (argc, argv, "v")) != -1) {
+		switch (opt) {
+			case 'v':
+				verbose = true;
+				break;
+			case '?':
+				fprintf(stderr, "Unknown argument \'-%c\'.\n", optopt);
+				exit(1);
+		}
+	}
+	if (argc-optind == 1) {
+		strcpy(filename, argv[optind]);
 	} else {
 		printf("Please supply a source file.\n");
 		exit(1);
@@ -61,7 +84,6 @@ float *calculate_rms(float *rms) {
 	int frame; // dummy variable for inner loop
 	double local_rms; // temporary variable for inner loop
 
-	printf("%d\n", RMS_FRAME_COUNT);
 	for (int rms_frame = 0; rms_frame < RMS_FRAME_COUNT; rms_frame++) {
 		frames_read = sf_readf_float(source_file, read_cache, FRAMES_IN_RMS_FRAME);
 
@@ -79,47 +101,7 @@ float *calculate_rms(float *rms) {
 	return rms;
 }
 
-int main(int argc, char *argv[]) {
-	// GET FILE TO OPEN FROM ARGUMENT
-	const char *filename = interpret_args(argc, argv);
-
-	// SOURCE FILE
-	open_source_file(filename);
-
-	// DESTINATION FILE
-	dest_info.samplerate = 44100;
-	dest_info.channels = 2;
-	dest_info.format = SF_FORMAT_WAV ^ SF_FORMAT_PCM_16 ^ SF_ENDIAN_FILE;
-
-	open_dest_file(dest_file, &dest_info);
-
-	// SOURCE FILE INFO
-	printf("Sample rate: %d\n", source_info.samplerate);
-	printf("Frames: %d\n", (int) source_info.frames);
-	printf("Channels: %d\n", source_info.channels);
-	printf("%f minutes long.\n", (source_info.frames/(double) source_info.samplerate)/60.0);
-
-	// CALCULATE RMS
-
-	FRAMES_IN_RMS_FRAME = (source_info.samplerate*RMS_FRAME_LENGTH)/1000; // (44100/1000)*20
-	RMS_FRAME_COUNT = ceil(source_info.frames/(float) FRAMES_IN_RMS_FRAME);
-	float *rms = malloc(2*RMS_FRAME_COUNT*sizeof(float));
-	calculate_rms(rms);
-
-	puts("Calculated RMS...");
-
-	// CALCULATE FEATURES OF LONG FRAMES
-
-	const int LONG_FRAME_LENGTH = 1000; // milliseconds
-	const int FRAMES_IN_LONG_FRAME = (source_info.samplerate*LONG_FRAME_LENGTH)/1000; // (44100/1000)*20
-	const int LONG_FRAME_COUNT = ceil(source_info.frames/(float) FRAMES_IN_LONG_FRAME);
-
-	int RMS_FRAMES_IN_LONG_FRAME = LONG_FRAME_LENGTH/RMS_FRAME_LENGTH;
-
-	float *mean_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
-	float *variance_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
-	float *norm_variance_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
-	float *mler = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+float *calculate_features(float *rms, float *mean_rms, float *variance_rms, float *norm_variance_rms, float *mler) {
 
 	int start_rms_frame = 0;
 	int current_rms_frame = 0;
@@ -158,20 +140,75 @@ int main(int argc, char *argv[]) {
 		norm_variance_rms[long_frame] = variance_rms[long_frame]/mean_rms[long_frame];
 		mler[long_frame] = mler[long_frame]/(2*RMS_FRAMES_IN_LONG_FRAME);
 
-		/*printf("Seconds: %d\n", long_frame);
-		printf("Mean: %f\n", mean_rms[long_frame]);
-		printf("Variance: %f\n", variance_rms[long_frame]);
-		printf("Normalized variance: %f\n", norm_variance_rms[long_frame]);
-		printf("MLER: %f\n\n", mler[long_frame]);*/
+		if (very_verbose) {
+			printf("Seconds: %d\n", long_frame);
+			printf("Mean: %f\n", mean_rms[long_frame]);
+			printf("Variance: %f\n", variance_rms[long_frame]);
+			printf("Normalized variance: %f\n", norm_variance_rms[long_frame]);
+			printf("MLER: %f\n\n", mler[long_frame]);
+		}
 
 		start_rms_frame += RMS_FRAMES_IN_LONG_FRAME;
+	}
+}
+
+int main(int argc, char *argv[]) {
+	// GET FILE TO OPEN FROM ARGUMENT
+	interpret_args(argc, argv);
+
+	// SOURCE FILE
+	open_source_file(filename);
+
+	// DESTINATION FILE
+	dest_info.samplerate = 44100;
+	dest_info.channels = 2;
+	dest_info.format = SF_FORMAT_WAV ^ SF_FORMAT_PCM_16 ^ SF_ENDIAN_FILE;
+
+
+	open_dest_file(dest_file, &dest_info);
+
+	// SOURCE FILE INFO
+	if (verbose) {
+		printf("Sample rate: %d\n", source_info.samplerate);
+		printf("Frames: %d\n", (int) source_info.frames);
+		printf("Channels: %d\n", source_info.channels);
+		printf("%f minutes long.\n", (source_info.frames/(double) source_info.samplerate)/60.0);
+	}
+
+	// CALCULATE RMS
+
+	FRAMES_IN_RMS_FRAME = (source_info.samplerate*RMS_FRAME_LENGTH)/1000; // (44100/1000)*20
+	RMS_FRAME_COUNT = ceil(source_info.frames/(float) FRAMES_IN_RMS_FRAME);
+
+	float *rms = malloc(2*RMS_FRAME_COUNT*sizeof(float));
+	calculate_rms(rms);
+
+	if (verbose) {
+		puts("Calculated RMS!");
+	}
+
+	// CALCULATE FEATURES OF LONG FRAMES
+
+	FRAMES_IN_LONG_FRAME = (source_info.samplerate*LONG_FRAME_LENGTH)/1000; // (44100/1000)*20
+	LONG_FRAME_COUNT = ceil(source_info.frames/(float) FRAMES_IN_LONG_FRAME);
+	RMS_FRAMES_IN_LONG_FRAME = LONG_FRAME_LENGTH/RMS_FRAME_LENGTH;
+
+	float *mean_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+	float *variance_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+	float *norm_variance_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+	float *mler = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+
+	calculate_features(rms, mean_rms, variance_rms, norm_variance_rms, mler);
+
+	if (verbose) {
+		puts("Calculated features!");
 	}
 
 	// CLASSIFY
 	bool *music = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
 	bool *music_second_pass = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
 
-	// First pass: decide whether a given second segment is music or speech
+	// Decide whether a given second segment is music or speech
 	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
 		if (mler[long_frame] < 0.01) {
 			music[long_frame] = true;
@@ -179,7 +216,6 @@ int main(int argc, char *argv[]) {
 			music[long_frame] = false;
 		}
 	}
-
 
 	// Second pass: check if there are other speech segments within the next 10 frames
 	music_second_pass[0] = true;
@@ -235,8 +271,10 @@ int main(int argc, char *argv[]) {
 	}
 	free(segments);
 
-	for (int s = 0; s < current_merged_segment; s++) {
-		printf("%d to %d: music? %d\n", merged_segments[s].startframe, merged_segments[s].endframe, merged_segments[s].is_music);
+	if (verbose) {
+		for (int s = 0; s < current_merged_segment; s++) {
+			printf("%d to %d: music? %d\n", merged_segments[s].startframe, merged_segments[s].endframe, merged_segments[s].is_music);
+		}
 	}
 
 	// Finally, we write only the speech sections to the destination file
@@ -268,6 +306,8 @@ int main(int argc, char *argv[]) {
 	int dest_file_status = sf_close(dest_file);
 
 	free(rms);
+
+	printf("Successfully generated podcast_%s.\n", filename);
 
 	return source_file_status && dest_file_status;
 }
