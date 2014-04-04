@@ -1,3 +1,6 @@
+// main.c
+// ******************************
+//
 // podcastgen
 // by Trygve Bertelsen Wiig, 2014
 //
@@ -8,33 +11,29 @@
 // It then removes the music from the input file, and
 // fades the speech sections into each other.
 
-#include <sndfile.h>
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <getopt.h>
-#include <math.h>
-
-typedef enum { false, true } bool;
+#include "main.h"
 
 SNDFILE *source_file;
 SNDFILE *dest_file;
 SF_INFO source_info;
 SF_INFO dest_info;
 
-const int RMS_FRAME_LENGTH = 20; // Length of the RMS calculation frames in milliseconds
+const int RMS_FRAME_DURATION = 20; // Length of the RMS calculation frames in milliseconds
+const int LONG_FRAME_DURATION = 1000; // Length of the long (averaging) frames in milliseconds
 int FRAMES_IN_RMS_FRAME;
-int RMS_FRAME_COUNT;
-const int LONG_FRAME_LENGTH = 1000; // Length of the long (averaging) frames in milliseconds
 int FRAMES_IN_LONG_FRAME;
+int RMS_FRAME_COUNT;
 int LONG_FRAME_COUNT;
 int RMS_FRAMES_IN_LONG_FRAME;
 
 float LOW_ENERGY_COEFFICIENT = 0.15; // see http://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1292679
 float UPPER_MUSIC_THRESHOLD = 0.01; // MLER below this value => 1 second frame classified as music
 
-char filename[100];
+char *input_path;
+char *output_path;
+char *file_folders;
+char *filename;
+
 bool verbose = false;
 bool very_verbose = false;
 bool has_intro = true;
@@ -43,21 +42,39 @@ int signum(float n) {
 	return (n > 0) - (n < 0);
 }
 
+void split_path(char *full_path, char **folders, char **file) {
+	char *slash = full_path;
+	char *next;
+	while (next = strpbrk(slash + 1, "\\/")) {
+		slash = next;
+	}
+	if (full_path != slash) {
+		slash++;
+	}
+	*folders = strndup(full_path, slash - full_path);
+	*file = strdup(slash);
+}
+
 char *prettify_seconds(int start, int delta) {
+	char *interval_string = malloc(50);
+
 	int s_min = start/60;
 	int s_sec = start - s_min*60;
 
-	int e_min = (start + delta)/60;
-	int e_sec = (start + delta) - e_min*60;
+	if (0 != delta) {
+		int e_min = (start + delta)/60;
+		int e_sec = (start + delta) - e_min*60;
 
-	char *interval_string = malloc(50);
-	sprintf(interval_string, "%02d:%02d to %02d:%02d", s_min, s_sec, e_min, e_sec);
+		sprintf(interval_string, "%02d:%02d to %02d:%02d", s_min, s_sec, e_min, e_sec);
+	} else {
+		sprintf(interval_string, "%02d:%02d", s_min, s_sec);
+	}
 
 	return interval_string;
 }
 
 void open_source_file() {
-	if (!(source_file = sf_open(filename, SFM_READ, &source_info))) {
+	if (!(source_file = sf_open(input_path, SFM_READ, &source_info))) {
 		printf("An error occured while opening the source file.\n");
 		printf("%s\n", sf_strerror(NULL));
 		exit(1);
@@ -65,10 +82,13 @@ void open_source_file() {
 }
 
 void open_dest_file() {
-	char output_filename[100];
-	strcpy(output_filename, "podcast_");
-	strcat(output_filename, filename);
-	if (!(dest_file = sf_open(output_filename, SFM_WRITE, &dest_info))) {
+	output_path = malloc(200);
+
+	strcpy(output_path, file_folders);
+	strcat(output_path, "podcast_");
+	strcat(output_path, filename);
+
+	if (!(dest_file = sf_open(output_path, SFM_WRITE, &dest_info))) {
 		printf("An error occured while opening the destination file.\n");
 		printf("%s\n", sf_strerror(NULL));
 		exit(1);
@@ -118,7 +138,12 @@ char *interpret_args(int argc, char *argv[]) {
 	}
 
 	if (argc-optind == 1) {
-		strcpy(filename, argv[optind]);
+		input_path = malloc(100);
+		file_folders = malloc(100);
+		filename = malloc(100);
+
+		strcpy(input_path, argv[optind]);
+		split_path(input_path, &file_folders, &filename);
 	} else {
 		printf("Please supply a source file.\n");
 		exit(1);
@@ -140,7 +165,7 @@ float *calculate_rms(float *rms) {
 			local_rms += pow(read_cache[frame], 2);
 		}
 
-		local_rms = sqrt(local_rms/RMS_FRAME_LENGTH);
+		local_rms = sqrt(local_rms/RMS_FRAME_DURATION);
 		rms[rms_frame] = local_rms;
 	}
 
@@ -198,31 +223,27 @@ float *calculate_features(float *rms, float *mean_rms, float *variance_rms, floa
 }
 
 int main(int argc, char *argv[]) {
-	// GET FILE TO OPEN FROM ARGUMENT
 	interpret_args(argc, argv);
 
-	// SOURCE FILE
+	// Open files and set info
 	open_source_file(filename);
 
-	// DESTINATION FILE
 	dest_info.samplerate = 44100;
 	dest_info.channels = 2;
 	dest_info.format = SF_FORMAT_WAV ^ SF_FORMAT_PCM_16 ^ SF_ENDIAN_FILE;
 
-
 	open_dest_file(dest_file, &dest_info);
 
-	// SOURCE FILE INFO
 	if (verbose) {
 		printf("Sample rate: %d\n", source_info.samplerate);
 		printf("Frames: %d\n", (int) source_info.frames);
 		printf("Channels: %d\n", source_info.channels);
-		printf("%f minutes long.\n", (source_info.frames/(double) source_info.samplerate)/60.0);
+		printf("%s minutes long.\n", prettify_seconds(source_info.frames/(double) source_info.samplerate, 0));
 	}
 
-	// CALCULATE RMS
+	// Calculate Root-Mean-Square of source sound
 
-	FRAMES_IN_RMS_FRAME = (source_info.samplerate*RMS_FRAME_LENGTH)/1000; // (44100/1000)*20
+	FRAMES_IN_RMS_FRAME = (source_info.samplerate*RMS_FRAME_DURATION)/1000; // (44100/1000)*20
 	RMS_FRAME_COUNT = ceil(source_info.frames/(float) FRAMES_IN_RMS_FRAME);
 
 	float *rms = malloc(2*RMS_FRAME_COUNT*sizeof(float));
@@ -232,11 +253,11 @@ int main(int argc, char *argv[]) {
 		puts("Calculated RMS!");
 	}
 
-	// CALCULATE FEATURES OF LONG FRAMES
+	// Calculate RMS-derived features of long (1 second) frames
 
-	FRAMES_IN_LONG_FRAME = (source_info.samplerate*LONG_FRAME_LENGTH)/1000; // (44100/1000)*20
+	FRAMES_IN_LONG_FRAME = (source_info.samplerate*LONG_FRAME_DURATION)/1000; // (44100/1000)*20
 	LONG_FRAME_COUNT = ceil(source_info.frames/(float) FRAMES_IN_LONG_FRAME);
-	RMS_FRAMES_IN_LONG_FRAME = LONG_FRAME_LENGTH/RMS_FRAME_LENGTH;
+	RMS_FRAMES_IN_LONG_FRAME = LONG_FRAME_DURATION/RMS_FRAME_DURATION;
 
 	float *mean_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
 	float *variance_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
@@ -365,7 +386,7 @@ int main(int argc, char *argv[]) {
 	free(music);
 	free(rms);
 
-	printf("Successfully generated podcast_%s.\n", filename);
+	printf("Successfully generated %s.\n", output_path);
 
-	return source_file_status && dest_file_status;
+	return source_file_status || dest_file_status;
 }
