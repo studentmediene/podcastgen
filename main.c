@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <getopt.h>
 #include <math.h>
 
 typedef enum { false, true } bool;
@@ -58,17 +59,38 @@ void open_dest_file() {
 }
 
 char *interpret_args(int argc, char *argv[]) {
+	const char *HELP_TEXT =
+		"Syntax: podcastgen <options> <input file>\n"
+		"\n"
+		"	-h, --help\t\tDisplay this help text\n"
+		"	-v\t\t\tVerbose output\n"
+		"	--very-verbose\t\tVERY verbose output\n"
+		"	--ignore-start-music\tDo not remove music at start of file\n\n";
+
+	static struct option long_options[] = {
+		{"help", no_argument, NULL, 'h'},
+		{"very-verbose", no_argument, (int*) &very_verbose, true}
+	};
+
 	int opt;
-	while ((opt = getopt (argc, argv, "v")) != -1) {
+	while ((opt = getopt_long(argc, argv, "vh", long_options, NULL)) != -1) {
 		switch (opt) {
 			case 'v':
 				verbose = true;
 				break;
+			case 'h':
+				printf(HELP_TEXT);
+				exit(0);
 			case '?':
 				fprintf(stderr, "Unknown argument \'-%c\'.\n", optopt);
 				exit(1);
 		}
 	}
+
+	if (very_verbose) {
+		verbose = true;
+	}
+
 	if (argc-optind == 1) {
 		strcpy(filename, argv[optind]);
 	} else {
