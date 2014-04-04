@@ -37,10 +37,23 @@ float UPPER_MUSIC_THRESHOLD = 0.01; // MLER below this value => 1 second frame c
 char filename[100];
 bool verbose = false;
 bool very_verbose = false;
-bool ignore_start_music = false;
+bool has_intro = true;
 
 int signum(float n) {
 	return (n > 0) - (n < 0);
+}
+
+char *prettify_seconds(int start, int delta) {
+	int s_min = start/60;
+	int s_sec = start - s_min*60;
+
+	int e_min = (start + delta)/60;
+	int e_sec = (start + delta) - e_min*60;
+
+	char *interval_string = malloc(50);
+	sprintf(interval_string, "%02d:%02d to %02d:%02d", s_min, s_sec, e_min, e_sec);
+
+	return interval_string;
 }
 
 void open_source_file() {
@@ -71,14 +84,12 @@ char *interpret_args(int argc, char *argv[]) {
 		"	-C\t\t\tSet the Low Energy Coefficient\n"
 		"	-T\t\t\tSet the Upper Music Threshold\n"
 		"	--very-verbose\t\tVERY verbose output\n"
-		"	--ignore-start-music,\n"
-		"	--has-intro\t\tDo not remove music at start of file\n\n";
+		"	--no-intro\t\tRemove music at start of file\n\n";
 
 	static struct option long_options[] = {
 		{"help", no_argument, NULL, 'h'},
 		{"very-verbose", no_argument, (int*) &very_verbose, true},
-		{"ignore-start-music", no_argument, (int*) &ignore_start_music, true},
-		{"has-intro", no_argument, (int*) &ignore_start_music, true}
+		{"no-intro", no_argument, (int*) &has_intro, false}
 	};
 
 	int opt;
@@ -240,7 +251,6 @@ int main(int argc, char *argv[]) {
 
 	// CLASSIFY
 	bool *music = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
-	bool *music_second_pass = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
 
 	// Decide whether a given second segment is music or speech
 	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
@@ -251,16 +261,20 @@ int main(int argc, char *argv[]) {
 		}
 	}
 
-	// Second pass: check if there are other speech segments within the next 10 frames
+	// Check if there are other speech segments within the next 10 frames
+	bool *music_second_pass = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
 	music_second_pass[0] = true;
 	music_second_pass[1] = true;
 	for (int long_frame = 2; long_frame < LONG_FRAME_COUNT-2; long_frame++) {
 		music_second_pass[long_frame] = rint((music[long_frame-2]+music[long_frame-1]+music[long_frame]+music[long_frame+1]+music[long_frame+2])/5.0);
+		//music_second_pass[long_frame] = music[long_frame];
 	}
+	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
+		music[long_frame] = music_second_pass[long_frame];
+	}
+	free(music_second_pass);
 
-	free(music);
-
-	// Third pass: merge smaller segments with larger segments
+	// Merge smaller segments with larger segments
 
 	typedef struct segment {
 		int startframe;
@@ -275,13 +289,13 @@ int main(int argc, char *argv[]) {
 			segments[current_segment].startframe = 0;
 			segments[current_segment].endframe = 0;
 			segments[current_segment].is_music = true;
-		} else if (music_second_pass[long_frame] == segments[current_segment].is_music) {
+		} else if (music[long_frame] == segments[current_segment].is_music) {
 			segments[current_segment].endframe++;
 		} else {
 			current_segment++;
 			segments[current_segment].startframe = long_frame;
 			segments[current_segment].endframe = long_frame;
-			segments[current_segment].is_music = music_second_pass[long_frame];
+			segments[current_segment].is_music = music[long_frame];
 		}
 	}
 
@@ -291,7 +305,7 @@ int main(int argc, char *argv[]) {
 		if (seg == 0) {
 			merged_segments[0].startframe = segments[0].startframe;
 			merged_segments[0].endframe = segments[0].endframe;
-			if (ignore_start_music) {
+			if (has_intro) {
 				merged_segments[0].is_music = false;
 			}
 		} else if (segments[seg].endframe - segments[seg].startframe < 10) {
@@ -307,7 +321,7 @@ int main(int argc, char *argv[]) {
 	}
 	free(segments);
 
-	if (verbose) {
+	if (very_verbose) {
 		for (int s = 0; s < current_merged_segment; s++) {
 			printf("%d to %d: music? %d\n", merged_segments[s].startframe, merged_segments[s].endframe, merged_segments[s].is_music);
 		}
@@ -316,12 +330,13 @@ int main(int argc, char *argv[]) {
 	// Finally, we write only the speech sections to the destination file
 	float *cache = malloc(1);
 	int frames_to_read;
+	int voice_segment_number = 1;
+
 	sf_count_t current_read_location;
 	sf_count_t current_write_location;
+
 	for (int s = 0; s < current_merged_segment; s++) {
-		if (merged_segments[s].is_music) {
-			continue;
-		} else {
+		if (!merged_segments[s].is_music) {
 			if (s == 0) {
 				current_read_location = sf_seek(source_file, (merged_segments[s].startframe)*FRAMES_IN_LONG_FRAME, SEEK_SET);
 				frames_to_read = (merged_segments[s].endframe-merged_segments[s].startframe+5)*FRAMES_IN_LONG_FRAME;
@@ -329,10 +344,16 @@ int main(int argc, char *argv[]) {
 				current_read_location = sf_seek(source_file, (merged_segments[s].startframe-5)*FRAMES_IN_LONG_FRAME, SEEK_SET);
 				frames_to_read = (merged_segments[s].endframe-merged_segments[s].startframe+10)*FRAMES_IN_LONG_FRAME;
 			}
+			if (verbose) {
+				printf("%d: %s\n", voice_segment_number, prettify_seconds((int) current_read_location/(float) FRAMES_IN_LONG_FRAME, (int) frames_to_read/(float) FRAMES_IN_LONG_FRAME));
+			}
+
 			cache = realloc(cache, frames_to_read*2*sizeof(float));
 			current_read_location = sf_readf_float(source_file, cache, frames_to_read);
 			current_write_location = sf_writef_float(dest_file, cache, frames_to_read);
+
 			sf_write_sync(dest_file);
+			voice_segment_number++;
 		}
 	}
 
@@ -341,6 +362,7 @@ int main(int argc, char *argv[]) {
 	sf_write_sync(dest_file);
 	int dest_file_status = sf_close(dest_file);
 
+	free(music);
 	free(rms);
 
 	printf("Successfully generated podcast_%s.\n", filename);
