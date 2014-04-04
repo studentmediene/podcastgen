@@ -1,4 +1,4 @@
-// main.h
+// files.h
 // ******************************
 //
 // podcastgen
@@ -11,19 +11,27 @@
 // It then removes the music from the input file, and
 // fades the speech sections into each other.
 
-#ifndef MAIN_H
-#define MAIN_H
+#ifndef FILES_H
+#define FILES_H
 
 #include <sndfile.h>
 
-typedef enum { false, true } bool;
+#include "main.h"
+#include "sound.h"
 
-extern bool verbose;
-extern bool very_verbose;
-extern bool has_intro;
+extern SNDFILE *source_file;
+extern SNDFILE *dest_file;
+extern SF_INFO source_info;
+extern SF_INFO dest_info;
+
+extern char *input_path;
+extern char *output_path;
+extern char *file_folders;
+extern char *filename;
 
 void open_source_file();
 void open_dest_file();
-char *interpret_args(int argc, char *argv[]);
+void write_speech_to_file(segment *merged_segments, int merged_segment_count);
+bool finalize_files();
 
 #endif
