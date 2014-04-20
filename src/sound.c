@@ -32,8 +32,8 @@ int RMS_FRAME_COUNT;
 int LONG_FRAME_COUNT;
 int RMS_FRAMES_IN_LONG_FRAME;
 
-float LOW_ENERGY_COEFFICIENT = 0.15; // see http://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1292679
-float UPPER_MUSIC_THRESHOLD = 0.01; // MLER below this value => 1 second frame classified as music
+float LOW_ENERGY_COEFFICIENT = 0.20; // see http://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=1292679
+float UPPER_MUSIC_THRESHOLD = 0.0; // MLER below this value => 1 second frame classified as music
 
 float *calculate_rms(float *rms) {
 	float *read_cache = malloc(2*FRAMES_IN_RMS_FRAME*sizeof(float));
@@ -107,7 +107,7 @@ float *calculate_features(float *rms, float *mean_rms, float *variance_rms, floa
 
 void classify_segments(bool *is_music, float *mler) {
 	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
-		if (mler[long_frame] < UPPER_MUSIC_THRESHOLD) {
+		if (mler[long_frame] <= UPPER_MUSIC_THRESHOLD) {
 			is_music[long_frame] = true;
 		} else {
 			is_music[long_frame] = false;
@@ -119,10 +119,14 @@ void average_musicness(bool *is_music) {
 	bool *music_second_pass = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
 	music_second_pass[0] = true;
 	music_second_pass[1] = true;
-	for (int long_frame = 2; long_frame < LONG_FRAME_COUNT-2; long_frame++) {
-		music_second_pass[long_frame] = rint((is_music[long_frame-2]+is_music[long_frame-1]+is_music[long_frame]+is_music[long_frame+1]+is_music[long_frame+2])/5.0);
+	music_second_pass[2] = true;
+	for (int long_frame = 3; long_frame < LONG_FRAME_COUNT-3; long_frame++) {
+		music_second_pass[long_frame] = rint((is_music[long_frame-3]+is_music[long_frame-2]+is_music[long_frame-1]+is_music[long_frame]+is_music[long_frame+1]+is_music[long_frame+2]+is_music[long_frame+3])/5.0);
 		//music_second_pass[long_frame] = is_music[long_frame];
 	}
+	music_second_pass[LONG_FRAME_COUNT] = false;
+	music_second_pass[LONG_FRAME_COUNT-1] = false;
+	music_second_pass[LONG_FRAME_COUNT-2] = false;
 	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
 		is_music[long_frame] = music_second_pass[long_frame];
 	}
@@ -130,6 +134,8 @@ void average_musicness(bool *is_music) {
 }
 
 int merge_segments(bool *is_music, segment *merged_segments) {
+	// Create segment structs with corresponding start, end and
+	// is_music values
 	segment *segments = malloc(LONG_FRAME_COUNT*sizeof(segment));
 	int current_segment = 0;
 	for (int long_frame = 0; long_frame < LONG_FRAME_COUNT; long_frame++) {
@@ -147,6 +153,8 @@ int merge_segments(bool *is_music, segment *merged_segments) {
 		}
 	}
 
+	// Merge smaller segments into larger segments and
+	// merge segments of the same type into each other
 	int current_merged_segment = 0;
 	for (int seg = 0; seg < current_segment; seg++) {
 		if (seg == 0) {
@@ -168,5 +176,24 @@ int merge_segments(bool *is_music, segment *merged_segments) {
 	}
 
 	free(segments);
+
+	// Grow speech segments slightly
+	const int GROW_BY_BEFORE = 3; // seconds
+	const int GROW_BY_AFTER = 3; // seconds
+	if (has_intro) {
+		merged_segments[0].endframe += GROW_BY_AFTER;
+	} else {
+		merged_segments[0].endframe -= GROW_BY_BEFORE;
+	}
+	for (int seg = 1; seg < current_segment; seg++) {
+		if (merged_segments[seg].is_music) {
+			merged_segments[seg].startframe += GROW_BY_BEFORE;
+			merged_segments[seg].endframe -= GROW_BY_AFTER;
+		} else {
+			merged_segments[seg].startframe -= GROW_BY_BEFORE;
+			merged_segments[seg].endframe += GROW_BY_AFTER;
+		}
+	}
+
 	return current_merged_segment;
 }
