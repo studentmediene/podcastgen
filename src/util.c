@@ -45,7 +45,7 @@ void _logger(severity_t severity, const char *message, ...) {
 	}
 }
 
-int signum(float n) {
+int signum(double n) {
 	return (n > 0) - (n < 0);
 }
 

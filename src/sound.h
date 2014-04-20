@@ -30,13 +30,13 @@ extern int RMS_FRAME_COUNT;
 extern int LONG_FRAME_COUNT;
 extern int RMS_FRAMES_IN_LONG_FRAME;
 
-extern float LOW_ENERGY_COEFFICIENT;
-extern float UPPER_MUSIC_THRESHOLD;
+extern double LOW_ENERGY_COEFFICIENT;
+extern double UPPER_MUSIC_THRESHOLD;
 
-float *calculate_rms(float *rms);
-float *calculate_features(float *rms, float *mean_rms, float *variance_rms, float *norm_variance_rms, float *mler);
-void classify_segments(bool *is_music, float *mler);
-void classify_segments2(bool* transition, float *mean_rms, float *variance_rms, float *norm_variance_rms, float *mler);
+double *calculate_rms(double *rms);
+double *calculate_features(double *rms, double *mean_rms, double *variance_rms, double *norm_variance_rms, double *mler);
+void classify_segments(bool *is_music, double *mler);
+int classify_segments2(segment *segments, double *mean_rms, double *variance_rms, double *norm_variance_rms, double *mler);
 void average_musicness(bool *is_music);
 int merge_segments(bool *is_music, segment *merged_segments);
 

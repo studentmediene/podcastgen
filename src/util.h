@@ -21,7 +21,7 @@ typedef enum {
 
 void _logger(severity_t severity, const char *message, ...)
 	    __attribute__((format (printf, 2, 3)));
-int signum(float n);
+int signum(double n);
 void split_path(char *full_path, char **folders, char **file);
 char *prettify_seconds(int start, int delta);
 double manymax(double args, ...);

@@ -104,48 +104,39 @@ int main(int argc, char *argv[]) {
 
 	// Calculate Root-Mean-Square of source sound
 	FRAMES_IN_RMS_FRAME = (source_info.samplerate*RMS_FRAME_DURATION)/1000; // (44100/1000)*20
-	RMS_FRAME_COUNT = ceil(source_info.frames/(float) FRAMES_IN_RMS_FRAME);
+	RMS_FRAME_COUNT = ceil(source_info.frames/(double) FRAMES_IN_RMS_FRAME);
 
-	float *rms = malloc(2*RMS_FRAME_COUNT*sizeof(float));
+	double *rms = malloc(2*RMS_FRAME_COUNT*sizeof(double));
 	calculate_rms(rms);
 
 	if (verbose) {
-		logger(NOTICE, "Calculated RMS!");
+		logger(INFO, "Calculated RMS!");
 	}
 
 	// Calculate RMS-derived features of long (1 second) frames
 	FRAMES_IN_LONG_FRAME = (source_info.samplerate*LONG_FRAME_DURATION)/1000; // (44100/1000)*20
-	LONG_FRAME_COUNT = ceil(source_info.frames/(float) FRAMES_IN_LONG_FRAME);
+	LONG_FRAME_COUNT = ceil(source_info.frames/(double) FRAMES_IN_LONG_FRAME);
 	RMS_FRAMES_IN_LONG_FRAME = LONG_FRAME_DURATION/RMS_FRAME_DURATION;
 
-	float *mean_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
-	float *variance_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
-	float *norm_variance_rms = malloc(2*LONG_FRAME_COUNT*sizeof(float));
-	float *mler = malloc(2*LONG_FRAME_COUNT*sizeof(float));
+	double *mean_rms = malloc(2*LONG_FRAME_COUNT*sizeof(double));
+	double *variance_rms = malloc(2*LONG_FRAME_COUNT*sizeof(double));
+	double *norm_variance_rms = malloc(2*LONG_FRAME_COUNT*sizeof(double));
+	double *mler = malloc(2*LONG_FRAME_COUNT*sizeof(double));
 
 	calculate_features(rms, mean_rms, variance_rms, norm_variance_rms, mler);
 
-	logger(NOTICE, "Calculated features!");
+	logger(INFO, "Calculated features!");
 
 	// CLASSIFY
 	bool *is_music = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
 
 	// Decide whether a given second long segment is music or speech,
 	// based on the MLER value and the Upper Music Threshold
-	//classify_segments(is_music, mler);
-	bool *transition = malloc(2*LONG_FRAME_COUNT*sizeof(bool));
-	classify_segments2(transition, mean_rms, variance_rms, norm_variance_rms, mler);
-
-	// The music-ness of the frame equals the average music-ness of itself and
-	// the two previous and next frames
-	average_musicness(is_music);
-
-	// Merge smaller segments with larger segments
-	segment *merged_segments = malloc(LONG_FRAME_COUNT*sizeof(segment));
-	int merged_segment_count = merge_segments(is_music, merged_segments);
+	segment *segments = malloc(LONG_FRAME_COUNT*sizeof(segment));
+	int segment_count = classify_segments2(segments, mean_rms, variance_rms, norm_variance_rms, mler);
 
 	// Finally, we write only the speech sections to the destination file
-	write_speech_to_file(merged_segments, merged_segment_count);
+	write_speech_to_file(segments, segment_count);
 
 	// Close files and free memory
 	bool file_close_success = finalize_files();
@@ -156,7 +147,7 @@ int main(int argc, char *argv[]) {
 	free(norm_variance_rms);
 	free(mler);
 
-	free(merged_segments);
+	free(segments);
 	free(is_music);
 	free(rms);
 
